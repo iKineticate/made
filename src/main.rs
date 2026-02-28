@@ -119,6 +119,7 @@ impl Tui {
                         self.exit = true;
                     } else {
                         self.search_text.clear();
+                        self.rebuild_filter();
                     }
                 },
                 KeyCode::Down => self.select_next(),
