@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 pub static CONFIG: LazyLock<Mutex<Config>> =
     LazyLock::new(|| Mutex::new(Config::open().expect("Failed to open config")));
 
-pub static CONFIG_PATH: LazyLock<PathBuf> =
-    LazyLock::new(|| EXE_PATH.with_file_name("made.toml"));
+pub static CONFIG_PATH: LazyLock<PathBuf> = LazyLock::new(|| EXE_PATH.with_file_name("made.toml"));
 
 pub static EXE_PATH: LazyLock<PathBuf> =
     LazyLock::new(|| std::env::current_exe().expect("Failed to get made.exe path"));
