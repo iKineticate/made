@@ -17,6 +17,8 @@ toml = "0.9.8"
 ib-pinyin = "0.3.1"
 # 剪切板
 arboard = "3.6.1"
+# 热键
+win-hotkeys = "0.5.1"
 
 [dependencies.windows]
 version = "0.62.2"

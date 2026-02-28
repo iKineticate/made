@@ -1,8 +1,14 @@
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+
+pub static CONFIG: LazyLock<Mutex<Config>> =
+    LazyLock::new(|| Mutex::new(Config::open().expect("Failed to open config")));
+
+pub static CONFIG_PATH: LazyLock<PathBuf> =
+    LazyLock::new(|| EXE_PATH.with_file_name("made.toml"));
 
 pub static EXE_PATH: LazyLock<PathBuf> =
     LazyLock::new(|| std::env::current_exe().expect("Failed to get made.exe path"));
@@ -14,9 +20,6 @@ pub static EXE_NAME: LazyLock<String> = LazyLock::new(|| {
         .map(|stem| stem.to_owned())
         .expect("Failed to get EXE name")
 });
-
-pub static CONFIG_PATH: LazyLock<PathBuf> =
-    LazyLock::new(|| EXE_PATH.with_file_name("made.toml"));
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -35,7 +38,7 @@ impl Config {
     pub fn open() -> Result<Self> {
         let default_config = Config::default();
 
-        Config::read().or_else(|e| {
+        Config::read().or_else(|_e| {
             let toml_str = toml::to_string_pretty(&default_config)?;
             std::fs::write(&*CONFIG_PATH, toml_str)?;
             Ok(default_config)
@@ -57,7 +60,8 @@ impl Config {
 
     pub fn push_text(&mut self, text: String) {
         if !self.texts.contains(&text) {
-            self.texts.push(text);
+            self.texts.push(text.trim().to_owned());
+            self.save();
         }
     }
 }

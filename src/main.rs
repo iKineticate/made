@@ -3,6 +3,7 @@ mod pinyin;
 mod single_instance;
 mod util;
 
+use std::sync::{Arc, LazyLock, Mutex, atomic::{AtomicBool, Ordering}};
 
 use anyhow::{Context, Result};
 use arboard::Clipboard;
@@ -16,13 +17,35 @@ use ratatui::{
         Block, List, ListItem, ListState, Paragraph, StatefulWidget, Widget
     },
 };
+use win_hotkeys::HotkeyManager;
+use win_hotkeys::VKey;
 
-use crate::{config::Config, pinyin::match_pinyin, single_instance::SingleInstance};
+use crate::{config::CONFIG, pinyin::match_pinyin, single_instance::SingleInstance};
+
+pub static CLIPBOARD: LazyLock<Mutex<Clipboard>> =
+    LazyLock::new(|| Mutex::new(Clipboard::new().expect("Failed to create new clipboard")));
+
+pub static UPDATE_TUI_TEXT: LazyLock<Arc<AtomicBool>> =
+    LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
 fn main() -> Result<()> {
     let _single_instance = SingleInstance::new()?;
 
-    ratatui::run(|terminal| Tui::default().run(terminal))
+    std::thread::spawn(move|| {
+        let mut hkm = HotkeyManager::new();
+
+        hkm.register_hotkey(VKey::C, &[VKey::Menu], move || {
+            let text = CLIPBOARD.lock().unwrap().get_text().unwrap();
+            CONFIG.lock().unwrap().push_text(text);
+            UPDATE_TUI_TEXT.store(true, Ordering::SeqCst);
+        }).unwrap();
+
+        hkm.event_loop();
+    });
+
+    ratatui::run(|terminal| Tui::default().run(terminal))?;
+
+    Ok(())
 }
 
 struct TextList {
@@ -31,10 +54,6 @@ struct TextList {
 }
 
 pub struct Tui {
-    clipboard: Clipboard,
-    //
-    config: Config,
-    //
     exit: bool,
     //
     search_text: String,
@@ -46,15 +65,9 @@ pub struct Tui {
 
 impl Default for Tui {
     fn default() -> Self {
-        let config = Config::open().expect("Failed to open config");
-
-        let clipboard = Clipboard::new().unwrap();
-
-        let items = config.texts.clone();
+        let items = CONFIG.lock().unwrap().texts.clone();
 
         let mut tui = Self {
-            clipboard,
-            config,
             exit: false,
             search_text: String::new(),
             character_index: 0,
@@ -75,6 +88,9 @@ impl Tui {
         while !self.exit {
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
             self.handle_events()?;
+            if UPDATE_TUI_TEXT.swap(false, Ordering::SeqCst) { 
+                self = Self::default();
+            }
         }
 
         Ok(())
@@ -124,7 +140,7 @@ impl Tui {
                             self.filtered_indices.get(selected)
                         {
                             let text = self.text_list.items[real_index].clone();
-                            self.clipboard.set_text(text)?;
+                            CLIPBOARD.lock().unwrap().set_text(text)?;
                         }
                     }
                 }
