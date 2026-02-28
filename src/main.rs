@@ -3,7 +3,10 @@ mod pinyin;
 mod single_instance;
 mod util;
 
-use std::sync::{Arc, LazyLock, Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    Arc, LazyLock, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::{Context, Result};
 use arboard::Clipboard;
@@ -14,7 +17,8 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     widgets::{
-        Block, List, ListItem, ListState, Paragraph, StatefulWidget, Widget
+        Block, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, StatefulWidget, Widget,
     },
 };
 use win_hotkeys::HotkeyManager;
@@ -31,14 +35,15 @@ pub static UPDATE_TUI_TEXT: LazyLock<Arc<AtomicBool>> =
 fn main() -> Result<()> {
     let _single_instance = SingleInstance::new()?;
 
-    std::thread::spawn(move|| {
+    std::thread::spawn(move || {
         let mut hkm = HotkeyManager::new();
 
         hkm.register_hotkey(VKey::C, &[VKey::Menu], move || {
             let text = CLIPBOARD.lock().unwrap().get_text().unwrap();
             CONFIG.lock().unwrap().push_text(text);
             UPDATE_TUI_TEXT.store(true, Ordering::Relaxed);
-        }).unwrap();
+        })
+        .unwrap();
 
         hkm.event_loop();
     });
@@ -61,6 +66,8 @@ pub struct Tui {
     //
     text_list: TextList,
     filtered_indices: Vec<usize>,
+    //
+    scrollbar_state: ScrollbarState,
 }
 
 impl Default for Tui {
@@ -76,6 +83,7 @@ impl Default for Tui {
                 state: ListState::default().with_selected(Some(0)),
             },
             filtered_indices: Vec::new(),
+            scrollbar_state: ScrollbarState::new(0),
         };
 
         tui.rebuild_filter();
@@ -94,7 +102,7 @@ impl Tui {
         Ok(())
     }
 
-    fn update_text_list(&mut self) { 
+    fn update_text_list(&mut self) {
         while UPDATE_TUI_TEXT.swap(false, Ordering::Relaxed) {
             self.text_list = TextList {
                 items: CONFIG.lock().unwrap().texts.clone(),
@@ -121,36 +129,33 @@ impl Tui {
                         self.search_text.clear();
                         self.rebuild_filter();
                     }
-                },
+                }
                 KeyCode::Down => self.select_next(),
                 KeyCode::Up => self.select_previous(),
                 KeyCode::Left => {
                     let cursor_moved_left = self.character_index.saturating_sub(1);
                     self.character_index = self.clamp_cursor(cursor_moved_left);
-                },
+                }
                 KeyCode::Right => {
                     let cursor_moved_right = self.character_index.saturating_add(1);
                     self.character_index = self.clamp_cursor(cursor_moved_right);
-                },
+                }
                 KeyCode::Home => self.select_first(),
                 KeyCode::End => self.select_last(),
                 KeyCode::Backspace => {
                     self.delete_char();
                     self.rebuild_filter();
-                
-                },
+                }
                 KeyCode::Char(to_insert) => {
                     self.enter_char(to_insert);
                     self.rebuild_filter();
-                },
+                }
                 KeyCode::Enter => {
-                    if let Some(selected) = self.text_list.state.selected() {
-                        if let Some(&real_index) =
-                            self.filtered_indices.get(selected)
-                        {
-                            let text = self.text_list.items[real_index].clone();
-                            CLIPBOARD.lock().unwrap().set_text(text)?;
-                        }
+                    if let Some(selected) = self.text_list.state.selected()
+                        && let Some(&real_index) = self.filtered_indices.get(selected)
+                    {
+                        let text = self.text_list.items[real_index].clone();
+                        CLIPBOARD.lock().unwrap().set_text(text)?;
                     }
                 }
                 _ => {}
@@ -249,6 +254,7 @@ impl Tui {
             })
             .collect();
 
+        self.scrollbar_state = ScrollbarState::new(self.filtered_indices.len());
         // 修正选中状态
         if self.filtered_indices.is_empty() {
             self.text_list.state.select(None);
@@ -269,6 +275,7 @@ impl Widget for &mut Tui {
 
         Tui::render_header(header_area, buf);
         self.render_list(content_area, buf);
+        self.render_scrollbar(content_area, buf);
         self.render_search(search_area, buf);
     }
 }
@@ -282,13 +289,28 @@ impl Tui {
     }
 
     fn render_search(&self, area: Rect, buf: &mut Buffer) {
-        let block = Block::bordered()
-            .title(" 搜索");
+        let block = Block::bordered().title(" 搜索");
 
         Paragraph::new(self.search_text.clone())
             .block(block)
             .centered()
             .render(area, buf);
+    }
+
+    fn render_scrollbar(&mut self, area: Rect, buf: &mut Buffer) {
+        let content_length = self.filtered_indices.len();
+        let position = self.text_list.state.selected().unwrap_or(0);
+
+        self.scrollbar_state = self
+            .scrollbar_state
+            .content_length(content_length)
+            .position(position);
+
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+
+        scrollbar.render(area, buf, &mut self.scrollbar_state);
     }
 
     fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
