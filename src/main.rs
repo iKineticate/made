@@ -37,7 +37,7 @@ fn main() -> Result<()> {
         hkm.register_hotkey(VKey::C, &[VKey::Menu], move || {
             let text = CLIPBOARD.lock().unwrap().get_text().unwrap();
             CONFIG.lock().unwrap().push_text(text);
-            UPDATE_TUI_TEXT.store(true, Ordering::SeqCst);
+            UPDATE_TUI_TEXT.store(true, Ordering::Relaxed);
         }).unwrap();
 
         hkm.event_loop();
@@ -88,12 +88,20 @@ impl Tui {
         while !self.exit {
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
             self.handle_events()?;
-            if UPDATE_TUI_TEXT.swap(false, Ordering::SeqCst) { 
-                self = Self::default();
-            }
+            self.update_text_list();
         }
 
         Ok(())
+    }
+
+    fn update_text_list(&mut self) { 
+        while UPDATE_TUI_TEXT.swap(false, Ordering::Relaxed) {
+            self.text_list = TextList {
+                items: CONFIG.lock().unwrap().texts.clone(),
+                state: ListState::default().with_selected(Some(0)),
+            };
+            self.rebuild_filter();
+        }
     }
 
     fn handle_events(&mut self) -> Result<()> {
